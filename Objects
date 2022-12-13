@@ -1,0 +1,194 @@
+#include <U8g2lib.h>
+#include <Wire.h>
+#include <ArduinoHttpClient.h>
+#include <WiFiNINA.h>     
+#include "arduino_secrets.h"
+#include <ArduinoJson.h>
+
+
+///////please enter your sensitive data in the Secret tab/arduino_secrets.h
+char ssid[] = SECRET_SSID;  // your WPA2 enterprise network SSID (name)
+char pass[] = SECRET_PASS;  // your WPA2 enterprise password
+
+String cnvIP;//used for printing the IP to a screen
+
+// fill in your server address here:
+char serverAddress[] = "helloworldcnc.glitch.me";
+// try to connect on the standard HTTPS port:
+int port = 443;
+
+// set up an SSL client (use WiFiClient if not using SSL):
+WiFiSSLClient wifi;
+// initialize the webSocket client
+WebSocketClient client = WebSocketClient(wifi, serverAddress, port);
+// message sending interval, in ms:
+int interval = 100;
+// last time a message was sent, in ms:
+long lastSend = 0;
+
+//JSON object
+StaticJsonDocument<300> socketDataSend;
+//for parsing the input
+StaticJsonDocument<300> socketDataReceive;
+//this will be attached to each message to identify where it is coming from
+//change this value for your project
+String dataID = "objduino";
+
+int sensor1Val;
+int sensor1Pin = A0;
+int sensor2Val;
+int sensor2Pin = A1;
+int sensor3Val;
+int sensor3Pin = A2;
+
+//oled setup
+U8G2_SH1106_128X64_NONAME_F_HW_I2C oled(U8G2_R0, /* reset=*/U8X8_PIN_NONE);
+
+
+void setup() 
+{
+  Serial.begin(9600);
+    //initialize the oled object and clear the buffer
+  oled.begin();
+  oled.clearBuffer();  // clear the internal memory
+  oled.setFont(u8g2_font_helvB08_tr);
+
+  String printConnection = "CONNECT "+String(ssid);
+  oled.drawStr(0,12,printConnection.c_str());
+  
+  // connect to WIFi:
+  while ( WiFi.status() != WL_CONNECTED) {
+    Serial.print("Attempting to connect to Network named: ");
+    Serial.println(ssid);
+    // Connect to WPA/WPA2 network:
+
+    printConnection+=":";
+    oled.drawStr(0,12,printConnection.c_str());
+    oled.sendBuffer();
+    WiFi.begin(ssid, pass);
+  }
+  
+  // print the SSID of the network you're attached to:
+  Serial.print("SSID: ");
+  Serial.println(WiFi.SSID());
+
+  // print your board's IP address:
+    printWifiData();
+    oled.sendBuffer();
+  // you're connected now, so print out the data:
+  Serial.print("You're connected to the network");
+  printCurrentNet();
+  // API endpoint to connect to:
+  client.begin("/");
+}
+
+void loop() {
+  Serial.println("starting WebSocket client");
+    
+  while (client.connected()) {
+    if (millis() - lastSend > interval) {
+      // read sensor:
+      sensor1Val = analogRead(sensor1Pin);
+      sensor2Val = analogRead(sensor2Pin);
+
+
+      //save the data into your JSON Object 
+      //the parameter names you create are important
+      //these names are how you will retrieve the data when read from the server 
+      socketDataSend["id"]=dataID;
+      socketDataSend["sensor1"]=sensor1Val;
+      socketDataSend["sensor2"]=sensor2Val;
+      
+
+      String message; //create variable to hold message
+      serializeJson(socketDataSend,message); //convert the JSON object to a String
+
+      // send the message:
+      client.beginMessage(TYPE_TEXT);
+      client.print(message);
+      client.endMessage();
+      // update the timestamp:
+      lastSend = millis();
+
+      //update the oled 
+      oled.clearBuffer();
+      oled.setFont(u8g2_font_helvB10_tr);
+      oled.drawStr(0,12,cnvIP.c_str());
+      oled.setFont(u8g2_font_profont11_mn);
+      oled.drawStr(0,25,message.c_str());
+      oled.sendBuffer();
+
+    }
+
+    // check if a message is available to be received
+    int messageSize = client.parseMessage();
+
+    if (messageSize > 0) {
+      
+      DeserializationError error = deserializeJson(socketDataReceive, client);
+
+      if(!error)
+      {
+        //get the id
+        String messageID = socketDataReceive["id"];
+        if(messageID != dataID)
+        {
+            Serial.println("new message");
+        }
+        else
+        {
+
+          Serial.println("that was from me");
+        }
+      
+
+
+      }
+      
+
+
+
+    }
+  }
+  // when the socket disconnects:
+  Serial.println("disconnected");
+}
+
+void printWifiData() 
+{
+  // print your board's IP address:
+  IPAddress ip = WiFi.localIP();
+  cnvIP = "IP: "+IpAddress2String(ip);
+  Serial.print("IP Address: ");
+  Serial.println(cnvIP);
+  oled.clearBuffer();
+  oled.setFont(u8g2_font_helvB10_tr);
+  oled.drawStr(0,12,cnvIP.c_str());
+  
+}
+String IpAddress2String(const IPAddress& address)
+{
+  return String() + address[0] + "." + address[1] + "." + address[2] + "." + address[3];
+}
+void printCurrentNet() {
+  // print the SSID of the network you're attached to:
+  Serial.print("SSID: ");
+  Serial.println(WiFi.SSID());
+
+  // print the MAC address of the router you're attached to:
+  byte bssid[6];
+  WiFi.BSSID(bssid);
+
+
+
+  // print the received signal strength:
+  long rssi = WiFi.RSSI();
+  Serial.print("signal strength (RSSI):");
+  Serial.println(rssi);
+
+  // print the encryption type:
+  byte encryption = WiFi.encryptionType();
+  Serial.print("Encryption Type:");
+  Serial.println(encryption, HEX);
+  Serial.println();
+}
